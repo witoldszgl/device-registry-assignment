@@ -5,57 +5,65 @@ require 'rails_helper'
 RSpec.describe AssignDeviceToUser do
   subject(:assign_device) do
     described_class.new(
-      requesting_user: user,
-      serial_number: serial_number,
-      new_device_owner_id: new_device_owner_id
+      user: user,
+      serial_number: serial_number
     ).call
   end
 
   let(:user) { create(:user) }
   let(:serial_number) { '123456' }
 
-  context 'when users registers a device to other user' do
-    let(:new_device_owner_id) { create(:user).id }
+  context 'when user registers a device on self' do
+    it 'creates a new device and assigns it to user' do
+      expect { assign_device }.to change(Device, :count).by(1)
+      
+      device = Device.last
+      expect(device.serial_number).to eq(serial_number)
+      expect(device.user_id).to eq(user.id)
+    end
 
-    it 'raises an error' do
-      expect { assign_device }.to raise_error(RegistrationError::Unauthorized)
+    it 'creates a device assignment record' do
+      expect { assign_device }.to change(DeviceAssignment, :count).by(1)
+      
+      assignment = DeviceAssignment.last
+      expect(assignment.user_id).to eq(user.id)
+      expect(assignment.operation_type).to eq('assign')
+      expect(assignment.performed_at).to be_present
     end
   end
 
-  context 'when user registers a device on self' do
-    let(:new_device_owner_id) { user.id }
+  context 'when device is already assigned to another user' do
+    let(:other_user) { create(:user) }
+    let!(:existing_device) { create(:device, user: other_user, serial_number: serial_number) }
 
-    it 'creates a new device' do
-      assign_device
+    it 'raises an error' do
+      expect { assign_device }.to raise_error(StandardError, 'Device is already assigned')
+    end
+  end
 
-      expect(user.devices.pluck(:serial_number)).to include(serial_number)
+  context 'when user has previously returned this device' do
+    before do
+
+      device = create(:device, user: user, serial_number: serial_number)
+      device.assign(user)
+      
+
+      ReturnDeviceFromUser.new(user: user, serial_number: serial_number).call
     end
 
-    context 'when a user tries to register a device that was already assigned to and returned by the same user' do
-      before do
-        assign_device
-        ReturnDeviceFromUser.new(user: user, serial_number: serial_number, from_user: user.id).call
-      end
-
-      it 'does not allow to register' do
-        expect { assign_device }.to raise_error(AssigningError::AlreadyUsedOnUser)
-      end
+    it 'raises an error' do
+      expect { assign_device }.to raise_error(StandardError, 'User has previously returned this device and cannot reassign it')
     end
+  end
 
-    context 'when user tries to register device that is already assigned to other user' do
-      let(:other_user) { create(:user) }
-
-      before do
-        AssignDeviceToUser.new(
-          requesting_user: other_user,
-          serial_number: serial_number,
-          new_device_owner_id: other_user.id
-        ).call
-      end
-
-      it 'does not allow to register' do
-        expect { assign_device }.to raise_error(AssigningError::AlreadyUsedOnOtherUser)
-      end
+  context 'when device is not found' do
+    it 'creates a new device and assigns it' do
+      expect { assign_device }.to change(Device, :count).by(1)
+      
+      device = Device.last
+      expect(device.serial_number).to eq(serial_number)
+      expect(device.user_id).to eq(user.id)
     end
   end
 end
+

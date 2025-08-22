@@ -3,45 +3,94 @@
 require 'rails_helper'
 
 RSpec.describe DevicesController, type: :controller do
-  let(:api_key) { create(:api_key) }
-  let(:user) { api_key.bearer }
-
+  let(:user) { create(:user) }
 
   describe 'POST #assign' do
     subject(:assign) do
       post :assign,
-           params: { new_owner_id: new_owner_id, device: { serial_number: '123456' } },
-           session: { token: user.api_keys.first.token }
+           params: { current_user_id: user.id, serial_number: '123456' }
     end
+
     context 'when the user is authenticated' do
-      context 'when user assigns a device to another user' do
-        let(:new_owner_id) { create(:user).id }
-
-        it 'returns an unauthorized response' do
-          expect(response.code).to eq(422)
-          expect(JSON.parse(response.body)).to eq({ 'error' => 'Unauthorized' })
-        end
+      it 'returns a success response' do
+        assign
+        expect(response).to be_successful
+        expect(JSON.parse(response.body)).to eq({ 'message' => 'Device assigned successfully' })
       end
 
-      context 'when user assigns a device to self' do
-        let(:new_owner_id) { user.id }
-
-        it 'returns a success response' do
-          assign
-          expect(response).to be_successful
-        end
+      it 'assigns the device to the user' do
+        expect { assign }.to change { Device.count }.by(1)
+        
+        device = Device.last
+        expect(device.serial_number).to eq('123456')
+        expect(device.user_id).to eq(user.id)
       end
     end
 
-    context 'when the user is not authenticated' do
-      it 'returns an unauthorized response' do
-        post :assign
-        expect(response).to be_unauthorized
+    context 'when device is already assigned' do
+      let!(:existing_device) { create(:device, user: create(:user), serial_number: '123456') }
+
+      it 'returns an error response' do
+        assign
+        expect(response.code).to eq('422')
+        expect(JSON.parse(response.body)).to eq({ 'error' => 'Device is already assigned' })
+      end
+    end
+
+    context 'when user has previously returned this device' do
+      before do
+
+        device = create(:device, user: user, serial_number: '123456')
+        device.assign(user)
+        
+
+        ReturnDeviceFromUser.new(user: user, serial_number: '123456').call
+      end
+
+      it 'returns an error response' do
+        assign
+        expect(response.code).to eq('422')
+        expect(JSON.parse(response.body)).to eq({ 'error' => 'User has previously returned this device and cannot reassign it' })
       end
     end
   end
 
   describe 'POST #unassign' do
-    # TODO: implement the tests for the unassign action
+    subject(:unassign) do
+      post :unassign,
+           params: { current_user_id: user.id, serial_number: '123456' }
+    end
+
+    context 'when device is assigned to user' do
+      let!(:device) { create(:device, user: user, serial_number: '123456') }
+
+      it 'returns a success response' do
+        unassign
+        expect(response).to be_successful
+        expect(JSON.parse(response.body)).to eq({ 'message' => 'Device unassigned successfully' })
+      end
+
+      it 'unassigns the device from the user' do
+        expect { unassign }.to change { device.reload.user_id }.from(user.id).to(nil)
+      end
+    end
+
+    context 'when device is not found' do
+      it 'returns an error response' do
+        unassign
+        expect(response.code).to eq('422')
+        expect(JSON.parse(response.body)).to eq({ 'error' => 'Device not found' })
+      end
+    end
+
+    context 'when device is not assigned' do
+      let!(:device) { create(:device, user: nil, serial_number: '123456') }
+
+      it 'returns an error response' do
+        unassign
+        expect(response.code).to eq('422')
+        expect(JSON.parse(response.body)).to eq({ 'error' => 'Device is not currently assigned' })
+      end
+    end
   end
 end
