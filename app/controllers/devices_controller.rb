@@ -3,21 +3,32 @@
 class DevicesController < ApplicationController
   before_action :authenticate_user!, only: %i[assign unassign]
   def assign
-    AssignDeviceToUser.new(
-      requesting_user: @current_user,
-      serial_number: params[:serial_number],
-      new_device_owner_id: params[:new_device_owner_id]
-    ).call
-    head :ok
+    user = User.find(params[:current_user_id])
+    service = AssignDeviceToUser.new(
+      user: user,
+      serial_number: params[:serial_number]
+    )
+    service.call
+    render json: { message: 'Device assigned successfully' }, status: :ok
+  rescue StandardError => e
+    render json: { error: e.message }, status: :unprocessable_entity
   end
 
   def unassign
-    # TODO: implement the unassign action
+    user = User.find(params[:current_user_id])
+    service = ReturnDeviceFromUser.new(
+      user: user,
+      serial_number: params[:serial_number]
+    )
+    service.call
+    render json: { message: 'Device unassigned successfully' }, status: :ok
+  rescue StandardError => e
+    render json: { error: e.message }, status: :unprocessable_entity
   end
 
   private
 
   def device_params
-    params.permit(:new_owner_id, :serial_number)
+    params.permit(:current_user_id, :serial_number)
   end
 end
